@@ -1,0 +1,74 @@
+name: Deploy patched New API
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Build patched New API run ID (not a commit SHA)
+        required: true
+        type: string
+      allow_version_upgrade:
+        description: Cross-version migration already staged and traffic paused
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: patched-new-api-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'xdujiang/new-api' && github.ref == 'refs/heads/sqlite-refund-rc49'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    defaults:
+      run:
+        working-directory: maintenance/sqlite-refund
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify successful build and download its release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          mkdir -p release
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > release/run.json
+          python3 - <<'PY'
+          import json,os
+          r=json.load(open('release/run.json'))
+          assert r['conclusion']=='success' and r['status']=='completed', 'Build must be successful'
+          assert r['path']=='.github/workflows/sqlite-refund-build.yml', 'Not the build workflow'
+          assert r['head_repository']['full_name']==os.environ['GITHUB_REPOSITORY'], 'Wrong repository'
+          PY
+          gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-bundle --dir release
+          mkdir release/unpacked
+          tar -xzf release/release-bundle.tar.gz -C release/unpacked
+          python3 - <<'PY'
+          import json,os,re
+          r=json.load(open('release/run.json'))
+          m=json.load(open('release/unpacked/release.json'))
+          assert str(m['build_run_id'])==os.environ['BUILD_RUN_ID']
+          assert m['maintenance_commit']==r['head_sha'], 'Artifact/build commit mismatch'
+          owner=os.environ['GITHUB_REPOSITORY_OWNER'].lower()
+          assert re.fullmatch(re.escape('ghcr.io/'+owner+'/new-api-local@sha256:')+'[0-9a-f]{64}',m['image'])
+          assert re.fullmatch('sha256:[0-9a-f]{64}',m['image_id'])
+          PY
+      - name: Transfer release and deploy over SSH
+        env:
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          ALLOW_UPGRADE: ${{ inputs.allow_version_upgrade }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: bash ci/ssh-deploy.sh

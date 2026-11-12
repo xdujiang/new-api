@@ -1,0 +1,8 @@
+/sources/
+/receipts/
+/release/
+*.tar.gz
+*.zip
+*.env
+container.json
+.ssh/
