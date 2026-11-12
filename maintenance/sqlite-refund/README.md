@@ -30,7 +30,9 @@
 - `SSH_PRIVATE_KEY`：用于 VPS root 登录的专用部署密钥，公钥需预先加入服务器。GitHub 推送密钥与 VPS 部署密钥用途不同。
 - `SSH_KNOWN_HOSTS`：通过已信任连接或云控制台核验的服务器主机公钥。非 22 端口用 `[主机]:端口` 格式。
 
-维护窗口暂停客户端和入站流量，再运行 `Deploy patched New API`，输入成功构建的 run ID，首次同版本修复保持 `allow_version_upgrade=false`。部署会校验构建状态和制品来源、按 digest 拉取镜像、核对测试凭据、停容器、备份完整数据目录、保留旧容器再启动新镜像。同版本启动失败会自动切回旧容器；启动日志只保留在 VPS 的备份目录。
+完成这些一次性配置后，日常部署只需打开 Actions → `Deploy patched New API` → Run workflow，选择 `sqlite-refund-rc49` 分支，保持 `build_run_id` 为空、`allow_version_upgrade=false`，点击运行。工作流自动选择本分支最近一次成功构建、下载部署包、上传 VPS 并部署，无需手动下载上传，也不必手动填写构建 ID。若需部署某次指定构建，可以填写它的 run ID；不接受其他分支的构建。没有成功构建或制品已过期时会停止，需先运行新构建。
+
+部署会短暂中断服务，请选择维护窗口并暂停客户端和入站流量。工作流校验构建状态和制品来源、按 digest 拉取镜像、核对测试凭据、停容器、备份完整数据目录、保留旧容器再启动新镜像。同版本启动失败会自动切回旧容器；启动日志只保留在 VPS 的备份目录。源码 push 只自动构建，不会自动部署生产。跨版本升级完成迁移演练后才启用 `allow_version_upgrade`。
 
 GitHub runner 必须能连接 VPS 的 SSH 端口。也可以下载 Actions 的 `release-bundle`，上传并解压至 `/root/new-api-releases/构建ID-部署ID/`（两个 ID 均为数字），在 VPS 执行：
 
