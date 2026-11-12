@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       build_run_id:
-        description: Successful Build patched New API run ID (not a commit SHA)
-        required: true
+        description: Leave empty to deploy the latest successful build on this branch
+        required: false
         type: string
       allow_version_upgrade:
         description: Cross-version migration already staged and traffic paused
@@ -37,10 +37,16 @@ jobs:
       - name: Verify successful build and download its release artifact
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          REQUESTED_BUILD_RUN_ID: ${{ inputs.build_run_id }}
         run: |
           set -Eeuo pipefail
-          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          BUILD_RUN_ID=$REQUESTED_BUILD_RUN_ID
+          if [[ -z "$BUILD_RUN_ID" ]]; then
+            BUILD_RUN_ID=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/sqlite-refund-build.yml/runs" \
+              -f branch="$GITHUB_REF_NAME" -f status=success -f per_page=1 --jq '.workflow_runs[0].id // empty')
+          fi
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]] || { echo '::error::No successful build found on this branch. Run Build patched New API first.'; exit 1; }
+          printf 'BUILD_RUN_ID=%s\n' "$BUILD_RUN_ID" >> "$GITHUB_ENV"
           mkdir -p release
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > release/run.json
           python3 - <<'PY'
@@ -49,6 +55,15 @@ jobs:
           assert r['conclusion']=='success' and r['status']=='completed', 'Build must be successful'
           assert r['path']=='.github/workflows/sqlite-refund-build.yml', 'Not the build workflow'
           assert r['head_repository']['full_name']==os.environ['GITHUB_REPOSITORY'], 'Wrong repository'
+          assert r['head_branch']==os.environ['GITHUB_REF_NAME'], 'Build belongs to another branch'
+          PY
+          # Also make the resolved ID available to Python in this step.
+          export BUILD_RUN_ID
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/artifacts" > release/artifacts.json
+          python3 - <<'PY'
+          import json
+          artifacts=json.load(open('release/artifacts.json'))['artifacts']
+          assert any(a['name']=='release-bundle' and not a['expired'] for a in artifacts), 'Release artifact is missing or expired. Run a new build.'
           PY
           gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-bundle --dir release
           mkdir release/unpacked
@@ -63,9 +78,9 @@ jobs:
           assert re.fullmatch(re.escape('ghcr.io/'+owner+'/new-api-local@sha256:')+'[0-9a-f]{64}',m['image'])
           assert re.fullmatch('sha256:[0-9a-f]{64}',m['image_id'])
           PY
+          echo "Deploying build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
       - name: Transfer release and deploy over SSH
         env:
-          BUILD_RUN_ID: ${{ inputs.build_run_id }}
           ALLOW_UPGRADE: ${{ inputs.allow_version_upgrade }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
