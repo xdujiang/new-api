@@ -1,0 +1,80 @@
+name: Build patched New API
+
+on:
+  push:
+    branches: [sqlite-refund-rc49]
+    paths:
+      - 'model/**'
+      - 'maintenance/sqlite-refund/**'
+      - '.github/workflows/sqlite-refund-*.yml'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - 'relaykit/**'
+      - 'tokenkit/**'
+      - 'web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: patched-new-api-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'xdujiang/new-api' && github.ref == 'refs/heads/sqlite-refund-rc49'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: maintenance/sqlite-refund
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test all three databases and build amd64 image
+        env:
+          IMAGE_SOURCE: https://github.com/${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          image="ghcr.io/$owner/new-api-local:build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf 'IMAGE_TAG=%s\n' "$image" >> "$GITHUB_ENV"
+          bash build.sh "$image"
+      - name: Publish image to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE_TAG"
+          docker logout ghcr.io
+      - name: Package deployment files and immutable image reference
+        run: |
+          set -Eeuo pipefail
+          python3 ci/package-release.py
+          {
+            echo 'Build, three-database tests and registry push completed.'
+            echo
+            echo "Build run ID: $GITHUB_RUN_ID"
+            echo
+            echo 'Deploy this run using the Deploy workflow.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: maintenance/sqlite-refund/release/release-bundle.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+      - name: Save build and test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-test-logs
+          path: maintenance/sqlite-refund/receipts/
+          retention-days: 30
+          if-no-files-found: ignore

@@ -1,0 +1,43 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: local-test-only
+      MYSQL_ROOT_HOST: '%'
+      MYSQL_DATABASE: newapi_refund_test
+    healthcheck:
+      test: [CMD-SHELL, 'mysql -h 127.0.0.1 -uroot -plocal-test-only -e "SELECT 1" newapi_refund_test']
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    tmpfs:
+      - /var/lib/mysql
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: local-test-only
+      POSTGRES_DB: newapi_refund_test
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U postgres -d newapi_refund_test']
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    tmpfs:
+      - /var/lib/postgresql/data
+  tests:
+    build:
+      context: ${PATCH_SOURCE:?Set PATCH_SOURCE}
+      dockerfile_inline: |
+        ARG GO_BUILDER
+        FROM $${GO_BUILDER}
+        WORKDIR /src
+        COPY . .
+        ENV CGO_ENABLED=0 GOWORK=off
+        RUN go mod download
+      args:
+        GO_BUILDER: ${GO_BUILDER:?Set GO_BUILDER}
+    environment:
+      TEST_MYSQL_DSN: 'root:local-test-only@tcp(mysql:3306)/newapi_refund_test?parseTime=true&timeout=10s'
+      TEST_POSTGRES_DSN: 'postgres://postgres:local-test-only@postgres:5432/newapi_refund_test?sslmode=disable'
+      LOCAL_REFUND_REQUIRE_MATRIX: '1'
+    command: [sh, -ec, 'go test ./model -run "^TestLocalSubscriptionRefundMatrix$$" -count=1 -v -timeout=180s; go test ./model -run "Test(CompleteSubscriptionOrder|ExpireSubscriptionOrder|Subscription|AdminReset)" -count=1 -v -timeout=180s']
