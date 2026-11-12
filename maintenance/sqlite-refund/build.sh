@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+trap 'rc=$?; echo "::error::Build script failed at line $LINENO: $BASH_COMMAND (exit $rc)"; exit "$rc"' ERR
 kit=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_dir=$(git -C "$kit" rev-parse --show-toplevel)
 image=${1:?Usage: bash build.sh IMAGE_TAG}
 cd "$kit"
+mkdir -p receipts
+exec > >(tee receipts/build-and-test.log) 2>&1
 sha256sum -c SHA256SUMS
 mapfile -t upstream < <(python3 - <<'PY'
 import json,re
@@ -17,6 +20,8 @@ PY
 version=${upstream[0]}
 base=${upstream[1]}
 git -C "$source_dir" merge-base --is-ancestor "$base" HEAD
+# A newly created fork can omit upstream release tags.
+git -C "$source_dir" fetch --no-tags https://github.com/QuantumNous/new-api.git "refs/tags/$version:refs/tags/$version"
 [[ $(git -C "$source_dir" rev-parse "${version}^{commit}") == "$base" ]]
 git -C "$source_dir" diff --exit-code
 git -C "$source_dir" diff --cached --exit-code
