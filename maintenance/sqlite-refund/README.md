@@ -36,6 +36,20 @@
 
 服务器需要 Docker、Python 3、curl、tar、sha256sum；不需要 Go 或 Bun。私有 GHCR 包先在服务器运行 `docker login ghcr.io -u xdujiang`，在提示处输入有包读取权限的 Token，不把 Token 放进命令、仓库或聊天。
 
+### VPS 一条命令更新公开 latest
+
+当前镜像已公开，不需要 GHCR 登录、GitHub Token 或手动下载上传部署包。服务器 root 执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xdujiang/new-api/sqlite-refund-rc51/maintenance/sqlite-refund/update.py -o /root/new-api-update.py && python3 /root/new-api-update.py
+```
+
+更新器先加互斥锁，拉取 latest，校验镜像来源、架构、补丁标记与不可变 digest，并查询公开 GitHub API 确认该源码提交有成功的构建。然后从镜像标注的固定源码提交下载并校验部署脚本、核对上游基线，才签发本地部署凭据并调用 deploy.sh。不是从移动分支下载另一版部署脚本来搭配旧镜像。已运行同一镜像时直接结束；任何前置验证失败都不会停服。拉取镜像和公开 API 请求仍需要服务器能访问 GHCR、GitHub API 和 raw.githubusercontent.com。
+
+后续在同一维护分支内，直接运行 `python3 /root/new-api-update.py` 即可再次更新。脚本会沿用原端口、数据目录和环境变量，停服备份、保留旧容器后切换，健康检查失败时按现有规则恢复。生产配置若超出原部署参数，deploy.sh 会停止并要求人工处理。维护窗口暂停请求，更新后仍须核对真实请求和账目。公开 GitHub API 有匿名访问额度；网络不可达、访问限流或构建尚未完成时需稍后重试。
+
+从 rc.49 升到 rc.51 属于跨版本。完成本文迁移演练后，显式执行 `python3 /root/new-api-update.py --upgrade`；默认命令会拒绝跨版本切换。`--upgrade` 不代表跳过备份，也不会在失败后自动让旧二进制读取可能已经迁移的数据。脚本输出部署文件目录、备份目录和回退命令，请保留。迁移到其他维护分支时，重新下载该分支的更新器并阅读对应升级说明。
+
 ### Actions SSH 部署
 
 将个人 fork 默认分支设为本维护分支；创建 GitHub Environment `production`，配置以下 Secrets：
