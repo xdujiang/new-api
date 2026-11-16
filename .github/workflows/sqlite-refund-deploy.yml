@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.repository == 'xdujiang/new-api' && github.ref == 'refs/heads/sqlite-refund-rc49'
+    if: github.repository == 'xdujiang/new-api' && github.ref == 'refs/heads/sqlite-refund-rc51'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: production

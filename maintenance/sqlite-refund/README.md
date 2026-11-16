@@ -1,9 +1,22 @@
 # SQLite 订阅退款修复分支
 
-仓库：https://github.com/xdujiang/new-api 。维护分支：`sqlite-refund-rc49`。
-官方基线：`v1.0.0-rc.49` / `48a6c87f9e7757fdc58e5be9bcb4f8281ad0dfd0`，记录于 `upstream.json`。
+仓库：https://github.com/xdujiang/new-api 。维护分支：`sqlite-refund-rc51`。
+官方基线：`v1.0.0-rc.51` / `c9c6da2786b6a0912215127e78e28fbc6650c85f`，记录于 `upstream.json`。
 
 修复 `RefundSubscriptionPreConsume` 已开启事务后，又通过全局 DB 开启独立事务的问题。退款金额和退款记录在同一事务里更新，避免 SQLite 写锁互等，也保证记录写入失败时金额一起回滚。保留 WAL、busy_timeout 和现有计费规则，不改数据库结构，不包含 PR #6090。此修复不能消除所有数据库锁，也不自动修正历史账目。
+
+## 从 rc.49 升级到 rc.51
+
+旧的 `sqlite-refund-rc49` 分支与镜像保留。本分支以上游正式发布的 rc.51 为基线，不跟踪未发布 main。上游 rc.51 仍存在独立退款事务，因此继续保留本地事务修复和三数据库回归测试。
+
+这是跨版本更新，不能直接按同版本回退处理。先用一致备份演练隔离迁移，再安排停服备份和上线；Actions 部署需在完成演练后勾选 `allow_version_upgrade`。部署失败时不得直接让旧版本读取可能已经迁移的数据，按文末跨版本恢复流程操作。
+
+上游发布说明：https://github.com/QuantumNous/new-api/releases/tag/v1.0.0-rc.51 。重点核对：
+
+- rc.50 引入提供商插件、请求处理插件和插件市场；rc.51 修复部分无 AVX 的 x86-64 CPU 请求时崩溃的问题。
+- 首次启动把旧敏感词设置迁移为 Request filter，并删除旧设置；降级后需要恢复配置或还原备份。
+- 已完成的系统任务默认仅保留 30 天；需要保留更久时先核对日志维护设置。
+- 使用 Vertex AI 视频时，核对渠道部署区域是否支持所用视频模型。
 
 ## GitHub 构建
 
@@ -13,7 +26,7 @@
 4. 使用上游 Dockerfile 完整编译前后端，构建 `linux/amd64`，推送 `ghcr.io/xdujiang/new-api-local:build-运行ID-尝试次数`。需要仓库允许 Actions 和 `packages: write`。首次发布后核对 GHCR 包访问权限；私有包需要服务器登录 GHCR。
 5. 成功任务保存 `release-bundle` 和测试日志，保留 30 天。包内 `release.json` 含不可变镜像 digest、镜像 ID、源码提交和基线，部署时核对这些信息。请把实际部署过的制品和日志另行归档。
 
-只有 `workflow_dispatch` 的工作流通常需要先存在于仓库默认分支，网页才提供 Run workflow。若需要手动构建或下述部署入口，可把个人 fork 的默认分支设为 `sqlite-refund-rc49`，无需改上游默认分支。已有构建也可以使用 Re-run jobs；更新代码后应触发新的构建而不是重跑旧提交。
+只有 `workflow_dispatch` 的工作流通常需要先存在于仓库默认分支，网页才提供 Run workflow。若需要手动构建或下述部署入口，可把个人 fork 的默认分支设为 `sqlite-refund-rc51`，无需改上游默认分支。已有构建也可以使用 Re-run jobs；更新代码后应触发新的构建而不是重跑旧提交。
 
 ## 部署到当前 VPS
 
@@ -30,7 +43,7 @@
 - `SSH_PRIVATE_KEY`：用于 VPS root 登录的专用部署密钥，公钥需预先加入服务器。GitHub 推送密钥与 VPS 部署密钥用途不同。
 - `SSH_KNOWN_HOSTS`：通过已信任连接或云控制台核验的服务器主机公钥。非 22 端口用 `[主机]:端口` 格式。
 
-完成这些一次性配置后，日常部署只需打开 Actions → `Deploy patched New API` → Run workflow，选择 `sqlite-refund-rc49` 分支，保持 `build_run_id` 为空、`allow_version_upgrade=false`，点击运行。工作流自动选择本分支最近一次成功构建、下载部署包、上传 VPS 并部署，无需手动下载上传，也不必手动填写构建 ID。若需部署某次指定构建，可以填写它的 run ID；不接受其他分支的构建。没有成功构建或制品已过期时会停止，需先运行新构建。
+完成这些一次性配置后，日常部署只需打开 Actions → `Deploy patched New API` → Run workflow，选择 `sqlite-refund-rc51` 分支，保持 `build_run_id` 为空、`allow_version_upgrade=false`，点击运行。工作流自动选择本分支最近一次成功构建、下载部署包、上传 VPS 并部署，无需手动下载上传，也不必手动填写构建 ID。若需部署某次指定构建，可以填写它的 run ID；不接受其他分支的构建。没有成功构建或制品已过期时会停止，需先运行新构建。
 
 部署会短暂中断服务，请选择维护窗口并暂停客户端和入站流量。工作流校验构建状态和制品来源、按 digest 拉取镜像、核对测试凭据、停容器、备份完整数据目录、保留旧容器再启动新镜像。同版本启动失败会自动切回旧容器；启动日志只保留在 VPS 的备份目录。源码 push 只自动构建，不会自动部署生产。跨版本升级完成迁移演练后才启用 `allow_version_upgrade`。
 
@@ -40,13 +53,13 @@ GitHub runner 必须能连接 VPS 的 SSH 端口。也可以下载 Actions 的 `
 bash /root/new-api-releases/构建ID-部署ID/kit/ci/remote-deploy.sh /root/new-api-releases/构建ID-部署ID
 ```
 
-上线后先核对 `/api/status` 版本为 `v1.0.0-rc.49-local-refund1`，验证一次真实请求和失败退款，核对账目、检查 `database is locked` 日志，再恢复流量。HTTP 启动健康检查不能代替真实计费验证。
+上线后先核对 `/api/status` 版本为 `v1.0.0-rc.51-local-refund1`，验证一次真实请求和失败退款，核对账目、检查 `database is locked` 日志，再恢复流量。HTTP 启动健康检查不能代替真实计费验证。
 
 备份位于 `/root/new-api/backups/时间戳/`。首次同版本修复需要回退时，暂停流量，在所用制品的 kit 目录执行 `bash rollback.sh /root/new-api/backups/时间戳`；旧容器和数据目录应保留。
 
 ## 后续维护和更新
 
-保持 `main` 跟踪官方；在维护分支提交自己的小改动。不要把官方 main 直接合入 rc.49 生产分支，也不要跟随 `latest` 自动替换生产镜像。修复和 CI 使用独立提交，便于移植。
+保持 `main` 跟踪官方；在维护分支提交自己的小改动。不要把官方 main 直接合入固定发布版的生产分支，也不要跟随 `latest` 自动替换生产镜像。修复和 CI 使用独立提交，便于移植。
 
 更新版本时，先阅读官方更新说明、备份生产数据，新增以上游目标标签为起点的维护分支。检查退款逻辑是否已修复；未修复则 cherry-pick 本分支的修复和测试提交。移植 maintenance 目录和两个 sqlite-refund 工作流，更新 `upstream.json` 的版本、完整 SHA，以及工作流中分支过滤和分支校验。检查上游 Dockerfile 和相关函数变化，解决冲突后执行 `python3 maintenance/sqlite-refund/ci/refresh-checksums.py`，提交并运行完整三数据库测试、前后端构建。上游已等价修复时删除本地生产代码补丁，保留适用的回归测试。
 

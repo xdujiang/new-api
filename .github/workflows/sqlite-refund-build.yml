@@ -2,7 +2,7 @@ name: Build patched New API
 
 on:
   push:
-    branches: [sqlite-refund-rc49]
+    branches: [sqlite-refund-rc51]
     paths:
       - 'model/**'
       - 'maintenance/sqlite-refund/**'
@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'xdujiang/new-api' && github.ref == 'refs/heads/sqlite-refund-rc49'
+    if: github.repository == 'xdujiang/new-api' && github.ref == 'refs/heads/sqlite-refund-rc51'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     defaults:
