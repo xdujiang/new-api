@@ -8,18 +8,10 @@ case "$(docker info --format '{{.Architecture}}')" in
 esac
 cd "$release/kit"
 sha256sum -c SHA256SUMS
-mapfile -t values < <(python3 - "$release/release.json" <<'PY'
-import json,re,sys
-m=json.load(open(sys.argv[1]))
-assert re.fullmatch(r'ghcr\.io/[a-z0-9_.-]+/new-api-local@sha256:[0-9a-f]{64}',m['image'])
-assert re.fullmatch(r'sha256:[0-9a-f]{64}',m['image_id'])
-print(m['image'])
-print(m['image_id'])
-PY
-)
-[[ ${#values[@]} == 2 ]]
-image=${values[0]}
-expected=${values[1]}
+image=$(jq -er '.image | select(type == "string")' "$release/release.json")
+expected=$(jq -er '.image_id | select(type == "string")' "$release/release.json")
+[[ "$image" =~ ^ghcr\.io/[a-z0-9_.-]+/new-api-local@sha256:[0-9a-f]{64}$ ]]
+[[ "$expected" =~ ^sha256:[0-9a-f]{64}$ ]]
 # GHCR read-only credentials are provisioned on the server, not passed through CI.
 docker pull "$image"
 [[ $(docker image inspect --format '{{.Id}}' "$image") == "$expected" ]]

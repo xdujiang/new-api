@@ -1,42 +1,35 @@
 #!/usr/bin/env bash
+# runtime: bash-jq-v1
 set -Eeuo pipefail
 umask 077
 kit=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 image=${1:?Usage: bash deploy.sh IMAGE}
 [[ $(id -u) == 0 ]] || { echo 'Run as root on the Docker server'; exit 1; }
-for tool in docker python3 curl tar; do command -v "$tool" >/dev/null; done
+for tool in docker jq curl tar; do command -v "$tool" >/dev/null; done
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
 [[ -f "$kit/receipts/verified-image-id" && $(cat "$kit/receipts/verified-image-id") == "$image_id" ]] || { echo 'Image has no matching build/test receipt. Run build.sh first.'; exit 1; }
 upstream=$(docker image inspect --format '{{index .Config.Labels "local.new-api.upstream"}}' "$image")
-current=$(curl --fail --silent --show-error --max-time 10 http://127.0.0.1:28659/api/status | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["version"])')
+current=$(curl --fail --silent --show-error --max-time 10 http://127.0.0.1:28659/api/status | jq -er '.data.version | select(type == "string" and length > 0)')
 cross_version=0
 if [[ "$current" != "$upstream" && "$current" != "$upstream-local-refund1" ]]; then
   [[ ${2:-} == --upgrade ]] || { echo "Running $current, candidate based on $upstream. Read the cross-version upgrade procedure, stage the migration, then use --upgrade."; exit 1; }
   cross_version=1
 fi
-docker inspect new-api | python3 -c '
-import sys,json
-c=json.load(sys.stdin)[0]
-m=[x for x in c["Mounts"] if x["Destination"]=="/data"]
-assert len(c["Mounts"])==1 and len(m)==1 and m[0]["Type"]=="bind" and m[0]["Source"]=="/root/new-api/data", "Unexpected data mount"
-p=c["HostConfig"]["PortBindings"]
-assert p=={"3000/tcp":[{"HostIp":"127.0.0.1","HostPort":"28659"}]}, "Unexpected port bindings"
-assert c["HostConfig"]["NetworkMode"] in ("default","bridge"), "Custom network requires manual deployment"
-assert c["State"]["Running"], "Current container must be running"
-'
+docker inspect new-api | jq -e '
+  .[0] | (.Mounts | length == 1) and
+  (.Mounts[0] | .Destination == "/data" and .Type == "bind" and .Source == "/root/new-api/data") and
+  (.HostConfig.PortBindings == {"3000/tcp":[{"HostIp":"127.0.0.1","HostPort":"28659"}]}) and
+  (.HostConfig.NetworkMode == "default" or .HostConfig.NetworkMode == "bridge") and
+  (.State.Running == true)
+' >/dev/null || { echo 'Unexpected container mounts, ports, network or state'; exit 1; }
 stamp=$(date +%Y%m%d-%H%M%S)
 state="/root/new-api/backups/$stamp"
 mkdir -p "$state"
 chmod 700 "$state"
 old="new-api-before-$stamp"
 docker inspect new-api > "$state/container.json"
-python3 - "$state" <<'PY'
-import sys,json,pathlib
-p=pathlib.Path(sys.argv[1]);c=json.loads((p/'container.json').read_text())[0]
-env=c['Config'].get('Env') or []
-assert all('\n' not in v and '\r' not in v for v in env), 'Multiline env requires manual deployment'
-(p/'container.env').write_text('\n'.join(env)+'\n')
-PY
+jq -e '.[0].Config.Env // [] | all(.[]; type == "string" and (contains("\n") or contains("\r") | not))' "$state/container.json" >/dev/null || { echo 'Multiline env requires manual deployment'; exit 1; }
+jq -r '.[0].Config.Env // [] | .[]' "$state/container.json" > "$state/container.env"
 printf '%s\n' "$old" > "$state/old-name"
 printf '%s\n' "$image_id" > "$state/new-image-id"
 printf '%s\n' "$upstream" > "$state/upstream-version"
@@ -77,7 +70,7 @@ docker run --name new-api -d --restart unless-stopped \
 healthy=0
 for ((attempt=0; attempt<30; attempt++)); do
   if curl --fail --silent --max-time 3 http://127.0.0.1:28659/api/status | \
-      python3 -c 'import sys,json;d=json.load(sys.stdin);assert d.get("success") and d["data"]["version"].endswith("-local-refund1")' 2>/dev/null; then
+      jq -e --arg expected "$upstream-local-refund1" '.success == true and .data.version == $expected' >/dev/null 2>&1; then
     healthy=1; break
   fi
   sleep 2

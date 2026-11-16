@@ -37,7 +37,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Validate public updater checks
-        run: python3 -m unittest discover -s ci -p 'test_update_latest.py' -v
+        run: |
+          python3 -m unittest discover -s ci -p 'test_update_latest.py' -v
+          bash ci/test-update-latest.sh "$RUNNER_TEMP/new-api-shell-checks"
       - name: Test all three databases and build amd64 image
         env:
           IMAGE_SOURCE: https://github.com/${{ github.repository }}
