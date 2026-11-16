@@ -23,8 +23,10 @@
 1. 首次 fork 后，在 Actions 页面启用工作流。若推送发生在启用前，可在启用后向此分支推送新提交以触发构建。
 2. 此分支代码、构建文件或维护文件发生变化时，`Build patched New API` 自动运行。它测试当前提交里的代码，不再下载和应用另一份补丁。
 3. 使用一次性 SQLite 文件、MySQL 8.0、PostgreSQL 17 验证正常退款、重复退款、失败回滚和并发退款，再跑现有订阅回归测试。三数据库必须全部通过。
-4. 使用上游 Dockerfile 完整编译前后端，构建 `linux/amd64`，推送 `ghcr.io/xdujiang/new-api-local:build-运行ID-尝试次数`。需要仓库允许 Actions 和 `packages: write`。首次发布后核对 GHCR 包访问权限；私有包需要服务器登录 GHCR。
+4. 使用上游 Dockerfile 完整编译前后端，构建 `linux/amd64`，推送 `ghcr.io/xdujiang/new-api-local:build-运行ID-尝试次数`。部署包保存成功后，同一已测试镜像另发布为 `ghcr.io/xdujiang/new-api-local:latest`；分支已有更新提交时，旧提交的构建不更新 latest。需要仓库允许 Actions 和 `packages: write`。当前 GHCR 包已公开，可匿名拉取。
 5. 成功任务保存 `release-bundle` 和测试日志，保留 30 天。包内 `release.json` 含不可变镜像 digest、镜像 ID、源码提交和基线，部署时核对这些信息。请把实际部署过的制品和日志另行归档。
+
+获取当前维护版本可以运行 `docker pull ghcr.io/xdujiang/new-api-local:latest`。latest 是可移动标签，拉取不会自动更新已有容器；生产升级仍需备份、重新创建容器并验证。需要重现或回退时使用对应构建编号标签或 digest。一键部署继续使用部署包内的固定 digest。迁移到后续版本维护分支时，应停止旧维护分支发布 latest，避免旧版本覆盖新版本。
 
 只有 `workflow_dispatch` 的工作流通常需要先存在于仓库默认分支，网页才提供 Run workflow。若需要手动构建或下述部署入口，可把个人 fork 的默认分支设为 `sqlite-refund-rc51`，无需改上游默认分支。已有构建也可以使用 Re-run jobs；更新代码后应触发新的构建而不是重跑旧提交。
 

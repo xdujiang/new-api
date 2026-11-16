@@ -70,6 +70,22 @@ jobs:
           path: maintenance/sqlite-refund/release/release-bundle.tar.gz
           retention-days: 30
           if-no-files-found: error
+      - name: Publish latest alias for the tested image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          remote_head=$(git ls-remote origin "$GITHUB_REF" | cut -f1)
+          if [[ "$remote_head" != "$GITHUB_SHA" ]]; then
+            echo 'A newer commit exists on this branch; keeping its latest publication eligible.'
+            exit 0
+          fi
+          latest="${IMAGE_TAG%:*}:latest"
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$IMAGE_TAG" "$latest"
+          docker push "$latest"
+          echo "Public image: $latest" >> "$GITHUB_STEP_SUMMARY"
       - name: Save build and test logs
         if: always()
         uses: actions/upload-artifact@v4
